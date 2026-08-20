@@ -7,8 +7,15 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 const FMP_KEY = process.env.FMP_API_KEY;
-const FMP_BASE = "https://financialmodelingprep.com/api/v3";
+const FMP_BASE = "https://financialmodelingprep.com/stable"; // newer keys (post Aug 2025) only have access to /stable, not legacy /api/v3
 const CACHE_TTL = 1000 * 60 * 60 * 12; // 12 hours — keeps us well inside the 250/day free limit
+
+function extractHistorical(data) {
+  // stable endpoint sometimes returns a bare array, sometimes { symbol, historical: [...] } — handle both
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.historical)) return data.historical;
+  return [];
+}
 
 const cache = new Map();
 
@@ -16,7 +23,10 @@ async function cachedFetch(key, url) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`FMP request failed (${res.status}) for ${key}`);
+  if (!res.ok) {
+    const hint = res.status === 403 ? " — check that FMP_API_KEY is set correctly in Render's Environment tab" : "";
+    throw new Error(`FMP request failed (${res.status}) for ${key}${hint}`);
+  }
   const data = await res.json();
   cache.set(key, { ts: Date.now(), data });
   return data;
@@ -82,11 +92,13 @@ function pearson(a, b) {
 // ---------- FMP-backed data ----------
 
 async function getSeries(symbol) {
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - 1100 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const data = await cachedFetch(
     `HIST_${symbol}`,
-    `${FMP_BASE}/historical-price-full/${symbol}?timeseries=1100&apikey=${FMP_KEY}`
+    `${FMP_BASE}/historical-price-eod/full?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}&apikey=${FMP_KEY}`
   );
-  const hist = data.historical || [];
+  const hist = extractHistorical(data);
   if (!hist.length) throw new Error(`No price history found for "${symbol}"`);
   return monthlyFromDaily(hist);
 }
@@ -104,12 +116,12 @@ app.get("/api/search", async (req, res) => {
     if (!q || q.length < 2) return res.json([]);
     const data = await cachedFetch(
       `SEARCH_${q.toLowerCase()}`,
-      `${FMP_BASE}/search?query=${encodeURIComponent(q)}&limit=8&apikey=${FMP_KEY}`
+      `${FMP_BASE}/search-name?query=${encodeURIComponent(q)}&limit=8&apikey=${FMP_KEY}`
     );
-    res.json((data || []).map((d) => ({
+    res.json((Array.isArray(data) ? data : []).map((d) => ({
       symbol: d.symbol,
       name: d.name,
-      exchange: d.exchangeShortName || d.stockExchange || "",
+      exchange: d.exchangeShortName || d.exchange || d.stockExchange || "",
     })));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -123,7 +135,7 @@ app.get("/api/fund-data", async (req, res) => {
 
     const [{ monthly, returns }, profileData, marketReturns] = await Promise.all([
       getSeries(symbol),
-      cachedFetch(`PROFILE_${symbol}`, `${FMP_BASE}/profile/${symbol}?apikey=${FMP_KEY}`).catch(() => null),
+      cachedFetch(`PROFILE_${symbol}`, `${FMP_BASE}/profile?symbol=${encodeURIComponent(symbol)}&apikey=${FMP_KEY}`).catch(() => null),
       getMarketReturns(),
     ]);
 
