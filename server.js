@@ -155,10 +155,27 @@ async function getMfapiSeries(schemeCode) {
   return { ...monthlyFromPoints(points), meta: data.meta };
 }
 
+async function mfapiSmartSearch(query) {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  // MFapi.in matches literal substrings of the full scheme name, so a query like
+  // "SBI Midcap" won't match "SBI Magnum Midcap Fund" (the words aren't adjacent).
+  // Search broadly on the first word, then filter locally requiring every word to
+  // appear somewhere in the name, in any order/position.
+  const broadWord = words[0];
+  const raw = await cachedFetch(`MFAPI_SEARCH_${broadWord}`, `${MFAPI_BASE}/mf/search?q=${encodeURIComponent(broadWord)}`).catch(() => []);
+  const list = Array.isArray(raw) ? raw : [];
+  if (words.length === 1) return list;
+  return list.filter((item) => {
+    const name = (item.schemeName || "").toLowerCase();
+    return words.every((w) => name.includes(w));
+  });
+}
+
 async function getNiftyBenchmarkCode() {
   const cached = cache.get("NIFTY_BENCHMARK_CODE");
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
-  const results = await cachedFetch("MFAPI_SEARCH_nifty50", `${MFAPI_BASE}/mf/search?q=${encodeURIComponent("nifty 50 index fund")}`);
+  const results = await mfapiSmartSearch("nifty 50 index fund");
   const pick = (results || []).find((r) => /direct/i.test(r.schemeName) && /growth/i.test(r.schemeName)) || (results || [])[0];
   if (!pick) throw new Error("Could not resolve a Nifty 50 benchmark fund from MFapi.in");
   cache.set("NIFTY_BENCHMARK_CODE", { ts: Date.now(), data: pick.schemeCode });
@@ -190,7 +207,7 @@ app.get("/api/search", async (req, res) => {
 
     const [fmpResults, mfapiResults] = await Promise.all([
       cachedFetch(`SEARCH_${q.toLowerCase()}`, `${FMP_BASE}/search-name?query=${encodeURIComponent(q)}&limit=6&apikey=${FMP_KEY}`).catch(() => []),
-      cachedFetch(`MFAPI_SEARCH_${q.toLowerCase()}`, `${MFAPI_BASE}/mf/search?q=${encodeURIComponent(q)}`).catch(() => []),
+      mfapiSmartSearch(q).catch(() => []),
     ]);
 
     const fmpMapped = (Array.isArray(fmpResults) ? fmpResults : []).slice(0, 6).map((d) => ({

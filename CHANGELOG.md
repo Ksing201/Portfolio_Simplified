@@ -4,6 +4,16 @@ All notable changes to Portfolio Simplified are documented here.
 
 ## [Unreleased]
 
+## [1.3.1] — Smarter Indian fund search
+### Fixed
+- MFapi.in's search matches literal substrings against the full scheme
+  name, so a query like "SBI Midcap" returned nothing for a real fund
+  named "SBI Magnum Midcap Fund" (the words aren't adjacent in the name).
+  Search now queries broadly on the first word, then filters locally,
+  requiring every word in your search to appear somewhere in the name —
+  in any order or position — so abbreviations and skipped words
+  ("ICICI Pru", "SBI Midcap") now match correctly.
+
 ## [1.3.0] — Indian mutual fund support via MFapi.in
 ### Added
 - Second data source, [MFapi.in](https://www.mfapi.in), for Indian mutual
