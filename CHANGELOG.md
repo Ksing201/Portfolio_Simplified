@@ -4,7 +4,52 @@ All notable changes to Portfolio Simplified are documented here.
 
 ## [Unreleased]
 
-## [1.3.1] — Smarter Indian fund search
+## [1.3.4] — Fuzzy, scored search over the full fund directory
+### Changed
+- Search now scores every scheme against your query instead of requiring
+  an exact substring match for every word. Verified locally against the
+  real-world case that prompted this: "ICICI Pru Retirement" now correctly
+  finds "ICICI Prudential Retirement Fund - Pure Equity Plan" (matching
+  "pru" as the start of "prudential"), and "SBI Midcap" / "SBI Mid Cap"
+  both correctly find "SBI Magnum Midcap Fund" regardless of spacing.
+- Falls back to the closest partial matches (ranked by score) if nothing
+  matches every word — so near-misses and typos still surface useful
+  results instead of an empty list.
+- This is effectively a local retrieval step over the full scheme
+  directory (pulled once, cached, searched entirely on our own server) —
+  the same idea as the app's original request for smarter search, without
+  needing a vector database for what is fundamentally short, structured
+  text.
+
+## [1.3.3] — Search the full scheme list ourselves
+### Changed
+- Replaced reliance on MFapi.in's own `/mf/search` endpoint (which appears
+  to truncate/limit results for common queries, based on live testing —
+  "SBI Midcap" and "ICICI Pru Retirement" both returned nothing even with
+  the 1.3.2 word-splitting fix) with a full-list approach: the complete
+  Indian mutual fund scheme list (~30,000+ schemes) is now pulled once via
+  pagination, cached for 12 hours, and searched entirely on our own server
+  with a simple, deterministic word-match filter. Removes dependency on
+  MFapi.in's undocumented search ranking/truncation behavior.
+- First search after a cold cache will be a few seconds slower while the
+  full list downloads; subsequent searches are served from the in-memory
+  cache and are fast.
+
+## [1.3.2] — Search on the specific word, not the generic one
+### Fixed
+- The previous fix (1.3.1) searched MFapi.in using the *first* word of the
+  query — but for queries like "SBI Midcap" or "ICICI Pru Retirement",
+  that's the AMC name (SBI, ICICI), which matches hundreds of schemes.
+  MFapi.in's own search results appear to be capped/truncated per query,
+  so the specific fund you actually wanted (e.g. "Magnum Midcap",
+  "Retirement") never made it into that truncated list to begin with.
+  Search now queries using the *longest* word(s) in your search — a proxy
+  for specificity, since fund-type words ("Midcap", "Retirement",
+  "Bluechip") narrow results far more than a common AMC prefix — merges
+  those candidate sets, and filters locally requiring every word to
+  appear somewhere in the name.
+
+## [1.3.1] — Smarter Indian fund search (first-word search + local filter)
 ### Fixed
 - MFapi.in's search matches literal substrings against the full scheme
   name, so a query like "SBI Midcap" returned nothing for a real fund

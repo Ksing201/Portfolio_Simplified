@@ -155,21 +155,62 @@ async function getMfapiSeries(schemeCode) {
   return { ...monthlyFromPoints(points), meta: data.meta };
 }
 
+async function getFullMfapiSchemeList() {
+  const cached = cache.get("MFAPI_FULL_LIST");
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+  // MFapi.in's own /mf/search endpoint appears to truncate results for common queries
+  // (e.g. "SBI" alone won't surface every SBI scheme). Instead, pull the full scheme
+  // list once via pagination and search it ourselves — deterministic and complete.
+  let all = [];
+  let offset = 0;
+  const limit = 2000;
+  for (let i = 0; i < 30; i++) {
+    const page = await fetch(`${MFAPI_BASE}/mf?limit=${limit}&offset=${offset}`).then((r) => (r.ok ? r.json() : []));
+    if (!Array.isArray(page) || page.length === 0) break;
+    all = all.concat(page);
+    if (page.length < limit) break;
+    offset += limit;
+  }
+  cache.set("MFAPI_FULL_LIST", { ts: Date.now(), data: all });
+  return all;
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function mfapiSmartSearch(query) {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  // MFapi.in matches literal substrings of the full scheme name, so a query like
-  // "SBI Midcap" won't match "SBI Magnum Midcap Fund" (the words aren't adjacent).
-  // Search broadly on the first word, then filter locally requiring every word to
-  // appear somewhere in the name, in any order/position.
-  const broadWord = words[0];
-  const raw = await cachedFetch(`MFAPI_SEARCH_${broadWord}`, `${MFAPI_BASE}/mf/search?q=${encodeURIComponent(broadWord)}`).catch(() => []);
-  const list = Array.isArray(raw) ? raw : [];
-  if (words.length === 1) return list;
-  return list.filter((item) => {
+  const full = await getFullMfapiSchemeList();
+
+  // Score every scheme instead of requiring a perfect match — handles abbreviations
+  // ("Pru" vs "Prudential"), spacing differences ("Midcap" vs "Mid Cap"), and near-typos
+  // gracefully, falling back to the closest matches rather than returning nothing.
+  const scored = [];
+  for (const item of full) {
     const name = (item.schemeName || "").toLowerCase();
-    return words.every((w) => name.includes(w));
-  });
+    const nameCompact = name.replace(/\s+/g, "");
+    let score = 0;
+    let matchedAll = true;
+    for (const w of words) {
+      const wCompact = w.replace(/\s+/g, "");
+      if (name.includes(w) || nameCompact.includes(wCompact)) {
+        score += 1;
+        if (new RegExp(`\\b${escapeRegex(w)}`).test(name)) score += 0.5; // word-boundary match is a stronger signal
+      } else {
+        matchedAll = false;
+      }
+    }
+    if (score > 0) scored.push({ item, score, matchedAll });
+  }
+
+  const complete = scored.filter((s) => s.matchedAll);
+  const pool = complete.length > 0 ? complete : scored; // fall back to best partial matches rather than zero results
+  return pool
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 30)
+    .map((s) => s.item);
 }
 
 async function getNiftyBenchmarkCode() {
