@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: portfolio-simplified
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: FMP_API_KEY
+        sync: false
