@@ -4,6 +4,39 @@ All notable changes to Portfolio Simplified are documented here.
 
 ## [Unreleased]
 
+## [1.3.0] — Indian mutual fund support via MFapi.in
+### Added
+- Second data source, [MFapi.in](https://www.mfapi.in), for Indian mutual
+  fund schemes (e.g. ICICI Pru, HDFC, SBI funds) — free, no API key
+  required. Fund search now returns results from both FMP (US
+  stocks/ETFs) and MFapi.in (Indian schemes) side by side.
+- **NIFTY 50** used as the market benchmark for Beta on Indian funds,
+  resolved automatically to a live Nifty 50 index fund on MFapi.in (instead
+  of S&P 500/SPY, which isn't a meaningful proxy for Indian equities).
+- Automatic category mapping from AMFI scheme categories (Equity, Debt,
+  Hybrid, Gold, International, Cash) for Indian funds.
+- Currency tracking per fund (USD/INR), with a warning banner if a
+  portfolio mixes currencies, since totals are summed as raw numbers
+  without FX conversion.
+- Currency selector added to the manual-entry fallback form.
+
+### Changed
+- Return-series alignment (used for Beta and correlation) switched from
+  exact-date matching to calendar-month-period matching (`YYYY-MM`), since
+  US and Indian markets don't share trading calendars — exact-date
+  alignment would have silently failed for most cross-market pairs.
+- Refactored FMP and MFapi data pipelines to share one metrics-calculation
+  function (`buildMetrics`), reducing duplicated CAGR/Steadiness/Beta/
+  Drawdown logic.
+
+### Known limitations
+- No FX conversion — a portfolio with both USD and INR funds shows a
+  mixed-currency warning rather than a single converted total.
+- Correlation between a US fund and an Indian fund is real (computed from
+  actual price history), but has less overlapping data than same-market
+  pairs, since it's aligned by calendar month rather than exact trading
+  day.
+
 ## [1.2.0] — Backend migrated to FMP stable API
 ### Fixed
 - Financial Modeling Prep retired their legacy `/api/v3/...` endpoints for

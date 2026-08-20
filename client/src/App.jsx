@@ -21,7 +21,8 @@ function catMeta(name) {
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const fmtMoney = (n) => "$" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+const CURRENCY_SYMBOL = { USD: "$", INR: "₹" };
+const fmtMoney = (n, currency = "USD") => (CURRENCY_SYMBOL[currency] || "") + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 const TONE_COLOR = ["#B54B3A", "#C88A2E", "#3E7A5A"];
 const TONE_BG = ["#F8E9E5", "#F8EFDD", "#E6F0E8"];
@@ -133,6 +134,8 @@ export default function App() {
   const [corrLoading, setCorrLoading] = useState(false);
 
   const symbols = useMemo(() => funds.map((f) => f.symbol).filter(Boolean), [funds]);
+  const currenciesInUse = useMemo(() => [...new Set(funds.map((f) => f.currency || "USD"))], [funds]);
+  const mixedCurrencies = currenciesInUse.length > 1;
 
   useEffect(() => {
     if (symbols.length < 2) { setCorrelationMatrix(null); return; }
@@ -294,11 +297,16 @@ export default function App() {
               <div className="fp-gauge-label">{funds.length === 0 ? "Add a fund to get a score" : healthScore >= 66 ? "Looking healthy" : healthScore >= 40 ? "Room to improve" : "Worth a closer look"}</div>
               <div className="fp-gauge-scale">Scale: 0 (needs work) — 100 (excellent)</div>
               <div className="fp-gauge-row">
-                <div className="fp-gauge-stat"><b>{fmtMoney(totalFamilyWealth)}</b><span>Total tracked</span></div>
+                <div className="fp-gauge-stat"><b>{mixedCurrencies ? fmtMoney(totalFamilyWealth, "") : fmtMoney(totalFamilyWealth, currenciesInUse[0])}</b><span>Total tracked</span></div>
                 <div className="fp-gauge-stat"><b>{funds.length}</b><span>Funds</span></div>
                 <div className="fp-gauge-stat"><b>{diversificationLabel === "Add a fund to see this" ? "–" : diversificationLabel}</b><span>Balance</span></div>
               </div>
             </div>
+            {mixedCurrencies && (
+              <div className="fp-diversify-note" style={{ background: TONE_BG[1], color: TONE_COLOR[1], marginTop: 12 }}>
+                This portfolio mixes currencies ({currenciesInUse.join(", ")}). Totals and the pie chart add raw numbers together without converting — treat the combined total as approximate, not exact.
+              </div>
+            )}
             <div className="fp-settings"><span>Safe/bank rate:</span><input type="number" value={riskFree} onChange={(e) => setRiskFree(Number(e.target.value))} /> %</div>
           </div>
 
@@ -382,8 +390,9 @@ export default function App() {
                   <h3 className="fp-fund-name">{f.name} {f.symbol && <span style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 13, color: "#9A9C8F" }}>({f.symbol})</span>}</h3>
                   <div className="fp-fund-meta">
                     <span className="fp-badge" style={{ background: cm.color + "22", color: cm.color }}>{cm.label}</span>
-                    <span className="fp-badge" style={{ background: "#EEEDE6", color: "#5B5F54" }}>{f.mode === "SIP" ? `SIP · ${fmtMoney(f.sip)}/mo` : "One-time"}</span>
-                    <span className="fp-fund-amount">{fmtMoney(f.amount)} invested</span>
+                    <span className="fp-badge" style={{ background: "#EEEDE6", color: "#5B5F54" }}>{f.mode === "SIP" ? `SIP · ${fmtMoney(f.sip, f.currency)}/mo` : "One-time"}</span>
+                    <span className="fp-fund-amount">{fmtMoney(f.amount, f.currency)} invested</span>
+                    {f.benchmark && <span className="fp-badge" style={{ background: "#EEEDE6", color: "#5B5F54" }}>vs. {f.benchmark}</span>}
                   </div>
                 </div>
                 <button className="fp-del-btn" onClick={() => removeFund(f.id)} aria-label="Remove fund"><Trash2 size={16} /></button>
@@ -433,7 +442,7 @@ function FundForm({ onCancel, onSave }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [manualMode, setManualMode] = useState(false);
-  const [manual, setManual] = useState({ name: "", category: "Equity", cagr: "", stdDev: "", maxDrawdown: "", beta: "" });
+  const [manual, setManual] = useState({ name: "", category: "Equity", cagr: "", stdDev: "", maxDrawdown: "", beta: "", currency: "USD" });
   const debounceRef = useRef(null);
 
   useEffect(() => {
@@ -456,6 +465,7 @@ function FundForm({ onCancel, onSave }) {
         cagr: Number(manual.cagr), stdDev: Number(manual.stdDev), maxDrawdown: Number(manual.maxDrawdown),
         beta: manual.beta === "" ? null : Number(manual.beta), downsideDev: null,
         expenseRatio: expenseRatio === "" ? null : Number(expenseRatio),
+        currency: manual.currency, benchmark: null,
       });
       return;
     }
@@ -471,6 +481,7 @@ function FundForm({ onCancel, onSave }) {
         name: data.name || selected.name, symbol: data.symbol, category: data.category, amount: Number(amount), mode, sip: Number(sip || 0),
         cagr: data.cagr, stdDev: data.stdDev, downsideDev: data.downsideDev, maxDrawdown: data.maxDrawdown, beta: data.beta,
         expenseRatio: expenseRatio === "" ? null : Number(expenseRatio),
+        currency: data.currency || "USD", benchmark: data.benchmark || null,
       });
     } catch (e) {
       setError(e.message + " You can enter the details manually instead.");
@@ -524,6 +535,12 @@ function FundForm({ onCancel, onSave }) {
                 </select>
               </div>
               <div className="fp-field"><label>Beta (optional)</label><input type="number" value={manual.beta} onChange={(e) => setManual({ ...manual, beta: e.target.value })} placeholder="0.9" /></div>
+            </div>
+            <div className="fp-field"><label>Currency</label>
+              <select value={manual.currency} onChange={(e) => setManual({ ...manual, currency: e.target.value })}>
+                <option value="USD">USD ($)</option>
+                <option value="INR">INR (₹)</option>
+              </select>
             </div>
             <div className="fp-field-row">
               <div className="fp-field"><label>Growth rate</label><input type="number" value={manual.cagr} onChange={(e) => setManual({ ...manual, cagr: e.target.value })} placeholder="10.5" /><div className="fp-field-hint">% per year</div></div>
